@@ -1,0 +1,48 @@
+# Environnements Virtuels
+.venv/
+venv/
+env/
+.env
+
+# Fichiers Python (Cache & Compilés)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Outils Jupyter & Notebooks
+.ipynb_checkpoints/
+
+# Fichiers de données (Ne pas pousser de gros datasets sur Git !)
+data/raw/*
+!data/raw/.gitkeep
+# data/processed/*
+# !data/processed/.gitkeep
+# *.csv
+# *.xlsx
+# *.parquet
+
+# Fichiers de Modèles ML (Gros fichiers binaires)
+# models/*
+# !models/.gitkeep
+# *.pkl
+# *.joblib
+# *.h5
+# *.pt
+# *.onnx
+
+# Fichiers Système & OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+
+# Fichiers d'Environnement de Développement (IDE)
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Configuration Spécifique Streamlit
+.streamlit/credentials.toml
