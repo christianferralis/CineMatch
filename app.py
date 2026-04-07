@@ -24,42 +24,22 @@ st.set_page_config(
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500"
 
 # ── Chargement et nettoyage ────────────────────────────────────────────────────
-GDRIVE_FILE_ID = "1PoXSkDgs4eH3VvHQk8jEc0faYhHrSZPh"
-LOCAL_PATH = "data/raw/TMDB_movie_dataset_v11.csv"
+GDRIVE_FILE_ID = "16DUF9yXnqBjvDbPDmUjIFPeKSAl0G4tr"
+LOCAL_PATH = "data/TMDB_cleaned.csv"
 
 @st.cache_data
 def load_data():
-    import os, gdown
+    import os, gdown, ast
     if not os.path.exists(LOCAL_PATH):
-        os.makedirs("data/raw", exist_ok=True)
+        os.makedirs("data", exist_ok=True)
         gdown.download(id=GDRIVE_FILE_ID, output=LOCAL_PATH, quiet=False)
 
-    df = pd.read_csv(LOCAL_PATH,
-        engine='python',
-        on_bad_lines='skip'
-    )
+    df = pd.read_csv(LOCAL_PATH)
 
-    df = df.drop([
-        'id', 'status', 'backdrop_path', 'homepage', 'imdb_id',
-        'tagline', 'production_companies', 'production_countries',
-        'keywords', 'revenue', 'budget', 'original_title', 'spoken_languages'
-    ], axis=1)
-
-    df = df.dropna(subset=['title', 'release_date', 'genres'])
     df['genres'] = df['genres'].apply(
-        lambda x: [genre.strip() for genre in x.split(',')]
+        lambda x: ast.literal_eval(x) if isinstance(x, str) else []
     )
-    df['vote_average'] = df['vote_average'].round(1)
-    df['year'] = pd.to_datetime(df['release_date']).dt.year
-
-    mask_low = (df['vote_average'] < 5) & (df['vote_count'] >= 3)
-    mask_high = (df['vote_average'] >= 5) & (df['vote_count'] >= 10)
-    df = df[mask_low | mask_high].copy()
-
-    df = df[
-        (df['overview'].notna()) &
-        (df['overview'] != '')
-    ].reset_index(drop=True)
+    df['year'] = pd.to_numeric(df['year'], errors='coerce')
 
     return df
 
