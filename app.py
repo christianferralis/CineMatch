@@ -4,10 +4,18 @@ import numpy as np
 import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as cos_sim
+from deep_translator import GoogleTranslator
+
+@st.cache_data(show_spinner=False)
+def traduire(texte):
+    try:
+        return GoogleTranslator(source='auto', target='fr').translate(texte)
+    except Exception:
+        return texte
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="🎬 CineMatch",
+    page_title="CineMatch",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -16,9 +24,17 @@ st.set_page_config(
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500"
 
 # ── Chargement et nettoyage ────────────────────────────────────────────────────
+GDRIVE_FILE_ID = "1PoXSkDgs4eH3VvHQk8jEc0faYhHrSZPh"
+LOCAL_PATH = "data/raw/TMDB_movie_dataset_v11.csv"
+
 @st.cache_data
 def load_data():
-    df = pd.read_csv("data/raw/TMDB_movie_dataset_v11.csv",
+    import os, gdown
+    if not os.path.exists(LOCAL_PATH):
+        os.makedirs("data/raw", exist_ok=True)
+        gdown.download(id=GDRIVE_FILE_ID, output=LOCAL_PATH, quiet=False)
+
+    df = pd.read_csv(LOCAL_PATH,
         engine='python',
         on_bad_lines='skip'
     )
@@ -114,7 +130,7 @@ def recommend_hybrid(title, df, mat_genres, mat_overview,
     )
 
     return recommendations[[
-        'title', 'genres', 'vote_average', 'overview', 'poster_path'
+        'title', 'genres', 'year', 'vote_average', 'overview', 'poster_path'
     ]]
 
 # ── Chargement des données ─────────────────────────────────────────────────────
@@ -133,22 +149,23 @@ st.sidebar.markdown("*Ton assistant de recommandation de films*")
 menu = st.sidebar.radio(
     "Navigation :",
     [
-        "🏠 Accueil",
-        "📊 Analyse des données",
-        "🎯 Recommandation",
-        "ℹ️ À propos",
+        "Accueil",
+        "Analyse des données",
+        "Recommandation",
+        "À propos",
     ]
 )
 
 if data_loaded:
     st.sidebar.divider()
     st.sidebar.metric("Films disponibles", f"{len(df):,}")
+    st.sidebar.image("assets/banner.png", use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 1 — ACCUEIL
 # ══════════════════════════════════════════════════════════════════════════════
-if menu == "🏠 Accueil":
-    st.title("🎬 CineMatch")
+if menu == "Accueil":
+    st.title("CineMatch")
     st.markdown("### Bienvenue sur ton assistant de recommandation de films !")
 
     with st.expander("Comment ça marche ?", expanded=True):
@@ -162,16 +179,16 @@ if menu == "🏠 Accueil":
 
     if data_loaded:
         col1, col2, col3 = st.columns(3)
-        col1.metric("🎬 Films disponibles", f"{len(df):,}")
-        col2.metric("⭐ Note moyenne", f"{df['vote_average'].mean():.1f}/10")
-        col3.metric("🎭 Genres uniques",
+        col1.metric("Films disponibles", f"{len(df):,}")
+        col2.metric("Note moyenne", f"{df['vote_average'].mean():.1f}/10")
+        col3.metric("Genres uniques",
                     f"{len(set([g for genres in df['genres'] for g in genres]))}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 2 — ANALYSE DES DONNÉES
 # ══════════════════════════════════════════════════════════════════════════════
-elif menu == "📊 Analyse des données":
-    st.title("📊 Analyse des données")
+elif menu == "Analyse des données":
+    st.title("Analyse des données")
 
     if not data_loaded:
         st.warning("Les données ne sont pas chargées.")
@@ -256,15 +273,56 @@ elif menu == "📊 Analyse des données":
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 3 — RECOMMANDATION
 # ══════════════════════════════════════════════════════════════════════════════
-elif menu == "🎯 Recommandation":
-    st.title("🎯 Recommandation de films")
+elif menu == "Recommandation":
+    st.image("assets/banniere3.png", use_container_width=True)
 
     if not data_loaded:
         st.warning("Les données ne sont pas chargées.")
     else:
-        # Sélection du film
-        film_list = sorted(df['title'].tolist())
-        film_choisi = st.selectbox("🔍 Choisis un film :", film_list)
+        # Filtres
+        all_genres = sorted(set(g for genres in df['genres'] for g in genres))
+        year_min = int(df['year'].min())
+        year_max = int(df['year'].max())
+
+        col_fg, col_fa = st.columns(2)
+        with col_fg:
+            filtre_genres = st.multiselect(
+                "Filtrer par genre(s)",
+                options=all_genres,
+                default=[],
+                help="Laisser vide pour ne pas filtrer"
+            )
+        with col_fa:
+            filtre_annees = st.slider(
+                "Filtrer par période de sortie",
+                min_value=year_min,
+                max_value=year_max,
+                value=(year_min, year_max),
+                step=1
+            )
+
+        # Sélection du film filtré
+        df_filtre = df[
+            (df['year'] >= filtre_annees[0]) &
+            (df['year'] <= filtre_annees[1])
+        ]
+        if filtre_genres:
+            df_filtre = df_filtre[
+                df_filtre['genres'].apply(
+                    lambda g: any(genre in g for genre in filtre_genres)
+                )
+            ]
+
+        film_list = sorted(df_filtre['title'].tolist())
+        if not film_list:
+            st.warning("Aucun film ne correspond aux filtres sélectionnés.")
+            st.stop()
+
+        film_choisi = st.selectbox(
+            f"Choisis un film ({len(film_list):,} disponibles) :",
+            film_list
+        )
+        traduire_fr = st.toggle("Traduire les résumés en français", value=False)
 
         if film_choisi:
             film_info = df[df['title'] == film_choisi].iloc[0]
@@ -281,11 +339,12 @@ elif menu == "🎯 Recommandation":
                         width=200
                     )
                 else:
-                    st.markdown("🎬 Pas d'affiche disponible")
+                    st.markdown("Pas d'affiche disponible")
 
             with col2:
-                st.subheader(f"🎥 {film_choisi}")
-                st.markdown(f"**Description :** {film_info['overview']}")
+                st.subheader(f"{film_choisi}")
+                overview_film = traduire(film_info['overview']) if traduire_fr else film_info['overview']
+                st.markdown(f"**Description :** {overview_film}")
                 st.markdown(
                     f"**Genres :** {', '.join(film_info['genres'])}"
                 )
@@ -294,20 +353,20 @@ elif menu == "🎯 Recommandation":
 
                 col_note, col_votes = st.columns(2)
                 with col_note:
-                    st.metric("⭐ Note",
+                    st.metric("Note",
                               f"{film_info['vote_average']}/10")
                 with col_votes:
-                    st.metric("👥 Votes",
+                    st.metric("Votes",
                               f"{int(film_info['vote_count']):,}")
 
             st.divider()
 
             # Paramètres
             with st.container(border=True):
-                st.subheader("⚙️ Paramètres de recommandation")
+                st.subheader("Paramètres de recommandation")
 
                 poids_genre = st.slider(
-                    "🎭 Importance des genres vs description",
+                    "Importance des genres vs description",
                     min_value=0.0,
                     max_value=1.0,
                     value=0.3,
@@ -319,38 +378,39 @@ elif menu == "🎯 Recommandation":
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("🎭 Poids genres",
+                    st.metric("Poids genres",
                               f"{int(poids_genre * 100)}%")
                 with col2:
-                    st.metric("📖 Poids description",
+                    st.metric("Poids description",
                               f"{int(poids_overview * 100)}%")
 
                 if poids_genre == 0.0:
                     st.info(
-                        "📖 Recommandation basée uniquement sur la description"
+                        "Recommandation basée uniquement sur la description"
                     )
                 elif poids_genre <= 0.3:
                     st.info(
-                        "📖 La description a plus d'importance que les genres"
+                        "La description a plus d'importance que les genres"
                     )
                 elif poids_genre == 0.5:
                     st.info(
-                        "⚖️ Équilibre parfait entre genres et description"
+                        "Équilibre parfait entre genres et description"
                     )
                 elif poids_genre <= 0.7:
                     st.info(
-                        "🎭 Les genres ont plus d'importance que la description"
+                        "Les genres ont plus d'importance que la description"
                     )
                 else:
                     st.info(
-                        "🎭 Recommandation basée principalement sur les genres"
+                        "Recommandation basée principalement sur les genres"
                     )
+
 
             st.divider()
 
             # Bouton recommandation
             if st.button(
-                "🎯 Trouver des films similaires",
+                "Trouver des films similaires",
                 type="primary",
                 use_container_width=True
             ):
@@ -365,43 +425,69 @@ elif menu == "🎯 Recommandation":
                 if resultats is None:
                     st.warning("Aucun film similaire trouvé.")
                 else:
-                    st.subheader(
-                        f"Films similaires à **{film_choisi}** :"
-                    )
+                    # Appliquer les filtres
+                    if filtre_genres:
+                        resultats = resultats[
+                            resultats['genres'].apply(
+                                lambda g: any(genre in g for genre in filtre_genres)
+                            )
+                        ]
+                    resultats = resultats[
+                        (resultats['year'] >= filtre_annees[0]) &
+                        (resultats['year'] <= filtre_annees[1])
+                    ]
 
-                    for _, row in resultats.iterrows():
-                        col1, col2 = st.columns([1, 3])
+                    if resultats.empty:
+                        st.warning(
+                            "Aucun film similaire trouvé avec ces filtres."
+                        )
+                    else:
+                        st.subheader(
+                            f"Films similaires à **{film_choisi}** :"
+                        )
 
-                        with col1:
-                            if (pd.notna(row.get('poster_path')) and
-                                    row['poster_path'] != ''):
-                                st.image(
-                                    TMDB_IMAGE_URL + row['poster_path'],
-                                    width=150
+                        for _, row in resultats.iterrows():
+                            col1, col2 = st.columns([1, 3])
+
+                            with col1:
+                                if (pd.notna(row.get('poster_path')) and
+                                        row['poster_path'] != ''):
+                                    st.image(
+                                        TMDB_IMAGE_URL + row['poster_path'],
+                                        width=150
+                                    )
+                                else:
+                                    st.markdown("Pas d'affiche")
+
+                            with col2:
+                                st.markdown(f"### {row['title']}")
+                                col_note, col_annee = st.columns(2)
+                                with col_note:
+                                    st.metric(
+                                        "Note",
+                                        f"{row['vote_average']}/10"
+                                    )
+                                with col_annee:
+                                    if pd.notna(row.get('year')):
+                                        st.metric(
+                                            "Année",
+                                            int(row['year'])
+                                        )
+                                st.markdown(
+                                    f"**Genres :** {', '.join(row['genres'])}"
                                 )
-                            else:
-                                st.markdown("🎬 Pas d'affiche")
+                                overview_rec = traduire(row['overview']) if traduire_fr else row['overview']
+                                st.markdown(
+                                    f"**Description :** {overview_rec}"
+                                )
 
-                        with col2:
-                            st.markdown(f"### {row['title']}")
-                            st.metric(
-                                "⭐ Note",
-                                f"{row['vote_average']}/10"
-                            )
-                            st.markdown(
-                                f"🎭 **Genres :** {', '.join(row['genres'])}"
-                            )
-                            st.markdown(
-                                f"📖 **Description :** {row['overview']}"
-                            )
-
-                        st.divider()
+                            st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 4 — À PROPOS
 # ══════════════════════════════════════════════════════════════════════════════
-elif menu == "ℹ️ À propos":
-    st.title("ℹ️ À propos du projet")
+elif menu == "À propos":
+    st.title("À propos du projet")
 
     st.markdown("""
     ### Présentation du projet
@@ -445,8 +531,8 @@ elif menu == "ℹ️ À propos":
     st.markdown("""
     ### Pistes d'amélioration
     """)
-    st.checkbox("Ajouter un filtre par genre dans la recherche")
-    st.checkbox("Ajouter un filtre par année de sortie")
+    st.checkbox("Ajouter un filtre par genre dans la recherche", value=True, disabled=True)
+    st.checkbox("Ajouter un filtre par année de sortie", value=True, disabled=True)
     st.checkbox("Intégrer les notes des utilisateurs (collaborative filtering)")
     st.checkbox("Améliorer la qualité des recommandations avec plus de features")
 
