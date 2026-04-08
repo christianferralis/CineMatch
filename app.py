@@ -6,14 +6,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as cos_sim
 from deep_translator import GoogleTranslator
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=True)
 def traduire(texte):
     try:
         return GoogleTranslator(source='auto', target='fr').translate(texte)
     except Exception:
         return texte
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# Configuration
 st.set_page_config(
     page_title="CineMatch",
     page_icon="🎬",
@@ -23,27 +23,39 @@ st.set_page_config(
 
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500"
 
-# ── Chargement et nettoyage ────────────────────────────────────────────────────
-GDRIVE_FILE_ID = "16DUF9yXnqBjvDbPDmUjIFPeKSAl0G4tr"
-LOCAL_PATH = "data/TMDB_cleaned.csv"
-
+# Chargement et nettoyage
 @st.cache_data
 def load_data():
-    import os, gdown, ast
-    if not os.path.exists(LOCAL_PATH):
-        os.makedirs("data", exist_ok=True)
-        gdown.download(id=GDRIVE_FILE_ID, output=LOCAL_PATH, quiet=False)
-
-    df = pd.read_csv(LOCAL_PATH)
-
-    df['genres'] = df['genres'].apply(
-        lambda x: ast.literal_eval(x) if isinstance(x, str) else []
+    df = pd.read_csv("data/raw/TMDB_movie_dataset_v11.csv",
+        engine='python',
+        on_bad_lines='skip'
     )
-    df['year'] = pd.to_numeric(df['year'], errors='coerce')
+
+    df = df.drop([
+        'id', 'status', 'backdrop_path', 'homepage', 'imdb_id',
+        'tagline', 'production_companies', 'production_countries',
+        'keywords', 'revenue', 'budget', 'original_title', 'spoken_languages'
+    ], axis=1)
+
+    df = df.dropna(subset=['title', 'release_date', 'genres'])
+    df['genres'] = df['genres'].apply(
+        lambda x: [genre.strip() for genre in x.split(',')]
+    )
+    df['vote_average'] = df['vote_average'].round(1)
+    df['year'] = pd.to_datetime(df['release_date']).dt.year
+
+    mask_low = (df['vote_average'] < 5) & (df['vote_count'] >= 3)
+    mask_high = (df['vote_average'] >= 5) & (df['vote_count'] >= 10)
+    df = df[mask_low | mask_high].copy()
+
+    df = df[
+        (df['overview'].notna()) &
+        (df['overview'] != '')
+    ].reset_index(drop=True)
 
     return df
 
-# ── Entraînement TF-IDF ────────────────────────────────────────────────────────
+# Entraînement TF-IDF
 @st.cache_resource
 def train_model(df):
     df['genres_str'] = df['genres'].apply(lambda x: ' '.join(x))
@@ -56,7 +68,7 @@ def train_model(df):
 
     return mat_genres, mat_overview
 
-# ── Fonction de recommandation hybride ────────────────────────────────────────
+# Fonction de recommandation hybride
 def recommend_hybrid(title, df, mat_genres, mat_overview,
                      top_n=5, poids_genre=0.3, note_min=5.0):
 
@@ -113,7 +125,7 @@ def recommend_hybrid(title, df, mat_genres, mat_overview,
         'title', 'genres', 'year', 'vote_average', 'overview', 'poster_path'
     ]]
 
-# ── Chargement des données ─────────────────────────────────────────────────────
+# Chargement des données
 try:
     df = load_data()
     mat_genres, mat_overview = train_model(df)
@@ -122,7 +134,7 @@ except Exception as e:
     st.error(f"Erreur lors du chargement : {e}")
     data_loaded = False
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# Sidebar
 st.sidebar.title("🎬 CineMatch")
 st.sidebar.markdown("*Ton assistant de recommandation de films*")
 
@@ -141,9 +153,8 @@ if data_loaded:
     st.sidebar.metric("Films disponibles", f"{len(df):,}")
     st.sidebar.image("assets/banner.png", use_container_width=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
 # PAGE 1 — ACCUEIL
-# ══════════════════════════════════════════════════════════════════════════════
+
 if menu == "Accueil":
     st.title("CineMatch")
     st.markdown("### Bienvenue sur ton assistant de recommandation de films !")
@@ -164,9 +175,8 @@ if menu == "Accueil":
         col3.metric("Genres uniques",
                     f"{len(set([g for genres in df['genres'] for g in genres]))}")
 
-# ══════════════════════════════════════════════════════════════════════════════
 # PAGE 2 — ANALYSE DES DONNÉES
-# ══════════════════════════════════════════════════════════════════════════════
+
 elif menu == "Analyse des données":
     st.title("Analyse des données")
 
@@ -250,9 +260,8 @@ elif menu == "Analyse des données":
             plt.tight_layout()
             st.pyplot(fig)
 
-# ══════════════════════════════════════════════════════════════════════════════
 # PAGE 3 — RECOMMANDATION
-# ══════════════════════════════════════════════════════════════════════════════
+
 elif menu == "Recommandation":
     st.image("assets/banniere3.png", use_container_width=True)
 
@@ -463,9 +472,8 @@ elif menu == "Recommandation":
 
                             st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
 # PAGE 4 — À PROPOS
-# ══════════════════════════════════════════════════════════════════════════════
+
 elif menu == "À propos":
     st.title("À propos du projet")
 
