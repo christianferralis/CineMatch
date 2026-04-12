@@ -8,6 +8,8 @@ from sklearn.metrics.pairwise import cosine_similarity as cos_sim
 from deep_translator import GoogleTranslator
 
 @st.cache_data(show_spinner=True)
+# Traduit un texte en français via Google Translate.
+# Retourne le texte original en cas d'erreur.
 def traduire(texte):
     try:
         return GoogleTranslator(source='auto', target='fr').translate(texte)
@@ -25,6 +27,8 @@ st.set_page_config(
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Chargement et nettoyage
+# Charge le dataset brut et le dataset nettoyé.
+# Retourne (df_raw, df) — df_raw pour les graphes avant filtrage, df pour les recommandations.
 @st.cache_data
 def load_data():
     df_raw = pd.read_csv("data/raw/TMDB_movie_dataset_v11.csv",
@@ -39,8 +43,11 @@ def load_data():
     return df_raw, df
 
 # Entraînement TF-IDF
+# Calcule les matrices TF-IDF des genres et des descriptions.
+# Mis en cache avec cache_resource pour n'être exécuté qu'une seule fois au démarrage.
 @st.cache_resource
 def train_model(df):
+   
     df['genres_str'] = df['genres'].apply(lambda x: ' '.join(x))
 
     vec_genres = TfidfVectorizer(stop_words='english')
@@ -52,22 +59,37 @@ def train_model(df):
     return mat_genres, mat_overview
 
 # Fonction de recommandation hybride
+# Retourne les top 5 films les plus similaires au titre donné.
+# Combine similarité cosinus sur les genres et les descriptions selon poids_genre.
+# Exclut les films trop similaires dans le titre, les documentaires hors contexte,
+# et les films sous la note minimale.
 def recommend_hybrid(title, df, mat_genres, mat_overview,
-                     top_n=5, poids_genre=0.3, note_min=5.0):
+                     top_n=5, poids_genre=0.5, note_min=5.0):
+    
 
+    # Vérifier que le film existe dans le dataset
     if title not in df['title'].values:
         return None
 
+    # Calculer le poids de la description (complément du poids genre)
     poids_overview = 1.0 - poids_genre
+    # Récupérer la position du film dans le DataFrame
     pos = df[df['title'] == title].index[0]
+    # Récupérer les genres du film pour filtrer les documentaires plus tard
     film_genres = set(df.iloc[pos]['genres'])
 
+    # Calculer la similarité cosinus entre le film et tous les autres sur les genres
     score_genre = cos_sim(mat_genres[pos], mat_genres).flatten()
+    # Calculer la similarité cosinus entre le film et tous les autres sur les descriptions
     score_overview = cos_sim(mat_overview[pos], mat_overview).flatten()
+    # Combiner les deux scores selon les poids choisis par l'utilisateur
     score_final = (poids_genre * score_genre) + (poids_overview * score_overview)
 
+    # Trier les indices par score décroissant
     top_indices = score_final.argsort()[::-1]
 
+    # Convertit un titre en ensemble de mots (minuscules, sans ponctuation)
+    # pour pouvoir comparer les titres et éviter les recommandations trop évidentes
     def clean_title(t):
         return set(re.sub(r'[^\w\s]', '', t.lower()).split())
 
@@ -75,30 +97,36 @@ def recommend_hybrid(title, df, mat_genres, mat_overview,
     results = []
 
     for idx in top_indices:
+        # Ignorer le film lui-même
         if idx == pos:
             continue
 
         film = df.iloc[idx]
 
+        # Ignorer les films sous la note minimale
         if film['vote_average'] < note_min:
             continue
 
+        # Ignorer les films dont le titre partage plus de 50% des mots avec le film choisi
         film_title_words = clean_title(film['title'])
         words_in_common = title_words & film_title_words
         if len(title_words) > 0 and len(words_in_common) / len(title_words) > 0.5:
             continue
 
+        # Ignorer les documentaires si le film choisi n'en est pas un
         if 'Documentary' in film['genres'] and 'Documentary' not in film_genres:
             continue
 
         results.append(idx)
 
+        # Arrêter quand on a assez de résultats
         if len(results) == top_n:
             break
 
     if not results:
         return None
 
+    # Trier les résultats par note décroissante
     recommendations = df.iloc[results].copy()
     recommendations = recommendations.sort_values(
         by='vote_average', ascending=False
@@ -180,14 +208,7 @@ elif menu == "Analyse des données":
 
         with tab2:
             st.subheader("Extrait du dataset nettoyé")
-            st.dataframe(
-                df[['title', 'genres', 'vote_average',
-                    'vote_count', 'year', 'overview']].head(10),
-                column_config={
-                    "year": st.column_config.NumberColumn("year", format="%d")
-                },
-                use_container_width=True
-            )
+            st.dataframe(df.head(10), use_container_width=True)
 
         with tab3:
             st.subheader("Statistiques générales")
@@ -212,96 +233,75 @@ elif menu == "Analyse des données":
                 )
 
         with tab4:
-            import matplotlib.pyplot as plt
-            import seaborn as sns
+            import plotly.express as px
+            import plotly.figure_factory as ff
 
             st.subheader("Distribution des notes avant filtrage")
             st.caption("La majorité des films ont une note de 0 car ils n'ont reçu aucun vote. Le dataset brut est très bruité.")
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.hist(df_raw['vote_average'].dropna(), bins=20,
-                    color='steelblue', edgecolor='white')
-            ax.set_title("Distribution des notes")
-            ax.set_xlabel("Note")
-            ax.set_ylabel("Nombre de films")
-            st.pyplot(fig, use_container_width=False)
+            fig = px.histogram(df_raw, x='vote_average', nbins=20, color_discrete_sequence=['steelblue'])
+            fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Distribution des notes (>= 1 vote)")
             st.caption("En ne gardant que les films avec au moins 1 vote, le pic à 0 disparaît mais la distribution reste déséquilibrée vers les notes basses.")
             df_vote1 = df_raw[df_raw['vote_count'] >= 1]
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.hist(df_vote1['vote_average'].dropna(), bins=20,
-                    color='steelblue', edgecolor='white')
-            ax.set_title("Distribution des notes >= 1 vote")
-            ax.set_xlabel("Note")
-            ax.set_ylabel("Nombre de films")
-            st.pyplot(fig, use_container_width=False)
+            fig = px.histogram(df_vote1, x='vote_average', nbins=20, color_discrete_sequence=['steelblue'])
+            fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Distribution des notes après filtrage")
             st.caption("Après filtrage (≥ 3 votes si note < 5, ≥ 10 votes sinon), la distribution est plus fiable et centrée autour de 6-7.")
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.hist(df['vote_average'], bins=20,
-                    color='salmon', edgecolor='white')
-            ax.set_title("Distribution des notes après filtrage")
-            ax.set_xlabel("Note")
-            ax.set_ylabel("Nombre de films")
-            st.pyplot(fig, use_container_width=False)
+            fig = px.histogram(df, x='vote_average', nbins=20, color_discrete_sequence=['salmon'])
+            fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Top 10 des genres les plus fréquents")
             st.caption("Le Drama et la Comédie dominent largement le dataset, reflétant la production mondiale de films.")
             df_genres = df.explode('genres')
-            genre_counts = df_genres['genres'].value_counts().head(10)
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.bar(genre_counts.index, genre_counts.values,
-                   color='steelblue', edgecolor='white')
-            ax.set_title("Top 10 des genres les plus fréquents")
-            ax.set_xlabel("Genres")
-            ax.set_ylabel("Nombre de films")
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig, use_container_width=False)
+            genre_counts = df_genres['genres'].value_counts().head(10).reset_index()
+            genre_counts.columns = ['genres', 'count']
+            fig = px.bar(genre_counts, x='genres', y='count', color_discrete_sequence=['steelblue'])
+            fig.update_layout(xaxis_title="Genre", yaxis_title="Nombre de films")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Nombre de films par année")
             st.caption("La production cinématographique mondiale explose à partir des années 2000 grâce à la démocratisation des outils de tournage et de distribution.")
-            films_per_year = df['year'].value_counts().sort_index()
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.plot(films_per_year.index, films_per_year.values, color='steelblue')
-            ax.set_title("Nombre de films par année")
-            ax.set_xlabel("Année")
-            ax.set_ylabel("Nombre de films")
-            plt.tight_layout()
-            st.pyplot(fig, use_container_width=False)
+            films_per_year = df['year'].value_counts().sort_index().reset_index()
+            films_per_year.columns = ['year', 'count']
+            fig = px.line(films_per_year, x='year', y='count', color_discrete_sequence=['steelblue'])
+            fig.update_layout(xaxis_title="Année", yaxis_title="Nombre de films")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Note moyenne par année")
             st.caption("Les films anciens ont tendance à avoir de meilleures notes : seuls les classiques ont survécu au temps et sont encore notés aujourd'hui.")
-            avg_per_year = df.groupby('year')['vote_average'].mean()
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.plot(avg_per_year.index, avg_per_year.values, color='salmon')
-            ax.set_title("Note moyenne des films par année")
-            ax.set_xlabel("Année")
-            ax.set_ylabel("Note moyenne")
-            plt.tight_layout()
-            st.pyplot(fig, use_container_width=False)
+            avg_per_year = df.groupby('year')['vote_average'].mean().reset_index()
+            fig = px.line(avg_per_year, x='year', y='vote_average', color_discrete_sequence=['salmon'])
+            fig.update_layout(xaxis_title="Année", yaxis_title="Note moyenne")
+            st.plotly_chart(fig, use_container_width=False)
 
             st.divider()
 
             st.subheader("Matrice de corrélation")
             st.caption("La popularité est faiblement corrélée à la note — un film peut être très populaire sans être bien noté, et vice versa.")
             corr = df[['vote_average', 'vote_count', 'popularity', 'runtime']].corr()
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            sns.heatmap(corr, annot=True, cmap='coolwarm', ax=ax)
-            ax.set_title("Matrice de corrélation")
-            plt.tight_layout()
-            st.pyplot(fig, use_container_width=False)
+            fig = ff.create_annotated_heatmap(
+                z=corr.values.round(2),
+                x=list(corr.columns),
+                y=list(corr.index),
+                colorscale='RdBu',
+                showscale=True
+            )
+            st.plotly_chart(fig, use_container_width=False)
 
 # PAGE 3 — RECOMMANDATION
 
@@ -322,7 +322,6 @@ elif menu == "Recommandation":
                 "Filtrer par genre(s)",
                 options=all_genres,
                 default=[],
-                help="Laisser vide pour ne pas filtrer"
             )
         with col_fa:
             filtre_annees = st.slider(
@@ -391,32 +390,34 @@ elif menu == "Recommandation":
                     st.metric(":material/group: Votes",
                               f"{int(film_info['vote_count']):,}")
 
-            # Paramètres
-            with st.container(border=True):
-                st.subheader("Paramètres de recommandation")
+            # Paramètres + bouton dans un form
+            with st.form("recommandation"):
+                with st.container(border=False):
+                    st.subheader("Paramètres de recommandation")
 
-                choix = st.pills(
-                    "Choisis ta préférence :",
-                    options=["Description", "Équilibre", "Genres"],
-                    default="Équilibre",
+                    poids_genre = st.slider(
+                        "Choisis ta préférence de recommandation :",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.5,
+                        step=0.5,
+                    )
+                    poids_overview = round(1.0 - poids_genre, 1)
+
+                    if poids_genre == 0.0:
+                        st.info("Recommandation basée uniquement sur la description")
+                    elif poids_genre == 0.5:
+                        st.info("Équilibre parfait entre genres et description")
+                    else:
+                        st.info("Recommandation basée uniquement sur les genres")
+
+                submitted = st.form_submit_button(
+                    "Trouver des films similaires",
+                    type="primary",
+                    use_container_width=True
                 )
 
-                poids_map = {"Description": 0.0, "Équilibre": 0.5, "Genres": 1.0}
-                info_map = {
-                    "Description": "Recommandation basée uniquement sur la description",
-                    "Équilibre": "Équilibre parfait entre genres et description",
-                    "Genres": "Recommandation basée uniquement sur les genres",
-                }
-                poids_genre = poids_map[choix]
-                poids_overview = round(1.0 - poids_genre, 1)
-                st.info(info_map[choix])
-
-            # Bouton recommandation
-            if st.button(
-                "Trouver des films similaires",
-                type="primary",
-                use_container_width=True
-            ):
+            if submitted:
                 with st.spinner("Recherche en cours..."):
                     resultats = recommend_hybrid(
                         film_choisi, df, mat_genres, mat_overview,
@@ -506,21 +507,22 @@ elif menu == "À propos":
 
     col1, col2 = st.columns(2)
     with col1:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown("**Nettoyage des données**")
             st.markdown("""
             - Suppression des colonnes inutiles
             - Filtrage selon le nombre de votes
+            - Suppresssion des films avec note 0
             - Conservation des films avec description
             - Export du dataset nettoyé dans `data/processed/`
             """)
     with col2:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown("**Système de recommandation**")
             st.markdown("""
-            - **TF-IDF** : transforme le texte en vecteurs numériques
-            - **Similarité cosinus** : mesure la proximité entre films
-            - **Système hybride** : combine genres et description
+            - TF-IDF: transforme le texte en vecteurs numériques
+            - Similarité cosinus: mesure la proximité entre films
+            - Système hybride: combine genres et description
             - Filtre sur la note minimale des recommandations
             - Exclusion des titres trop similaires et des documentaires
             """)
@@ -530,26 +532,29 @@ elif menu == "À propos":
     st.markdown("### Technologies utilisées")
     col1, col2, col3 = st.columns(3)
     with col1:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown("**Données**")
-            st.markdown("- Pandas\n- NumPy\n- TMDB Dataset")
+            st.markdown("""
+            - Pandas 
+            - NumPy
+            - TMDB Dataset
+            """)
     with col2:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown("**Similarité**")
-            st.markdown("- Scikit-learn\n- TF-IDF\n- Similarité cosinus")
+            st.markdown("""
+                        - Scikit-learn
+                        - TF-IDF
+                        - Similarité cosinus
+                        """)
     with col3:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown("**Application**")
-            st.markdown("- Streamlit\n- TMDB API\n- deep-translator")
+            st.markdown("""
+            - Streamlit
+            - Google Colab
+            - deep-translator
+            """)
 
-    st.divider()
-
-    st.markdown("### Pistes d'amélioration")
-    st.checkbox("Ajouter un filtre par genre dans la recherche", value=True, disabled=True)
-    st.checkbox("Ajouter un filtre par année de sortie", value=True, disabled=True)
-    st.checkbox("Traduire les résumés en français", value=True, disabled=True)
-    st.checkbox("Intégrer les notes des utilisateurs (collaborative filtering)")
-    st.checkbox("Améliorer la qualité des recommandations avec plus de features")
-
-st.sidebar.divider()
+st.divider()
 st.caption("CineMatch — Recommandation de films — 2026")
