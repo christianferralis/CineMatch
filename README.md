@@ -71,6 +71,32 @@ La similarité cosinus mesure l'**angle** entre deux vecteurs, pas leur distance
 
 ---
 
+## Les fonctions principales
+
+### `train_model(df)`
+Prend le DataFrame nettoyé et crée deux matrices TF-IDF :
+- Une sur les **genres** (`mat_genres`)
+- Une sur les **descriptions** (`mat_overview`)
+
+Ces matrices transforment le texte en chiffres pour pouvoir calculer des similarités. Grâce à `@st.cache_resource`, ce calcul n'est fait qu'**une seule fois** au démarrage — les matrices restent en mémoire pour toute la session.
+
+### `recommend_hybrid(title, df, mat_genres, mat_overview, top_n, poids_genre, note_min)`
+Prend un titre de film et retourne les 5 films les plus similaires. Étapes dans l'ordre :
+
+1. Vérifie que le film existe dans le dataset
+2. Calcule la similarité cosinus entre ce film et **tous les autres** sur les genres
+3. Calcule la similarité cosinus entre ce film et **tous les autres** sur les descriptions
+4. Combine les deux scores selon le poids choisi par l'utilisateur
+5. Parcourt les films du plus similaire au moins similaire et **filtre** :
+   - Le film lui-même
+   - Les films notés < 5
+   - Les titres trop similaires (> 50% de mots en commun)
+   - Les documentaires hors contexte
+6. S'arrête quand il a 5 résultats
+7. Trie les résultats par note décroissante et les retourne
+
+---
+
 ## Le système hybride
 
 ### Comment ça fonctionne ?

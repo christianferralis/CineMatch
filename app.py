@@ -1,8 +1,9 @@
 import ast
 import streamlit as st
 import pandas as pd
-import numpy as np
 import re
+import plotly.express as px
+import plotly.figure_factory as ff
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as cos_sim
 from deep_translator import GoogleTranslator
@@ -25,6 +26,12 @@ st.set_page_config(
 )
 
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500"
+
+def afficher_affiche(film, width=150):
+    if pd.notna(film.get('poster_path')) and film['poster_path'] != '':
+        st.image(TMDB_IMAGE_URL + film['poster_path'], width=width)
+    else:
+        st.markdown("Pas d'affiche disponible")
 
 # Chargement et nettoyage
 # Charge le dataset brut et le dataset nettoyé.
@@ -154,7 +161,7 @@ menu = st.sidebar.radio(
     [
         "Accueil",
         "Analyse des données",
-        "Recommandation",
+        "Cinématch",
         "À propos",
     ]
 )
@@ -233,9 +240,6 @@ elif menu == "Analyse des données":
                 )
 
         with tab4:
-            import plotly.express as px
-            import plotly.figure_factory as ff
-
             st.subheader("Distribution des notes avant filtrage")
             st.caption("La majorité des films ont une note de 0 car ils n'ont reçu aucun vote. Le dataset brut est très bruité.")
             fig = px.histogram(df_raw, x='vote_average', nbins=20, color_discrete_sequence=['steelblue'])
@@ -305,7 +309,7 @@ elif menu == "Analyse des données":
 
 # PAGE 3 — RECOMMANDATION
 
-elif menu == "Recommandation":
+elif menu == "Cinématch":
     st.image("assets/banniere3.png", use_container_width=True)
 
     if not data_loaded:
@@ -363,14 +367,7 @@ elif menu == "Recommandation":
             col1, col2 = st.columns([1, 3])
 
             with col1:
-                if (pd.notna(film_info.get('poster_path')) and
-                        film_info['poster_path'] != ''):
-                    st.image(
-                        TMDB_IMAGE_URL + film_info['poster_path'],
-                        width=200
-                    )
-                else:
-                    st.markdown("Pas d'affiche disponible")
+                afficher_affiche(film_info, width=200)
 
             with col2:
                 overview_film = traduire(film_info['overview']) if traduire_fr else film_info['overview']
@@ -390,26 +387,17 @@ elif menu == "Recommandation":
                     st.metric(":material/group: Votes",
                               f"{int(film_info['vote_count']):,}")
 
-            # Paramètres + bouton dans un form
+            # Paramètres de recommandation formulaire
             with st.form("recommandation"):
-                with st.container(border=False):
-                    st.subheader("Paramètres de recommandation")
+                st.subheader("Paramètres de recommandation")
 
-                    poids_genre = st.slider(
-                        "Choisis ta préférence de recommandation :",
-                        min_value=0.0,
-                        max_value=1.0,
-                        value=0.5,
-                        step=0.5,
-                    )
-                    poids_overview = round(1.0 - poids_genre, 1)
-
-                    if poids_genre == 0.0:
-                        st.info("Recommandation basée uniquement sur la description")
-                    elif poids_genre == 0.5:
-                        st.info("Équilibre parfait entre genres et description")
-                    else:
-                        st.info("Recommandation basée uniquement sur les genres")
+                choix = st.select_slider(
+                    "Choisis ta préférence de recommandation :",
+                    options=["Description", "Mixte", "Genres"],
+                    value="Mixte"
+                )
+                poids_map = {"Description": 0.0, "Mixte": 0.5, "Genres": 1.0}
+                poids_genre = poids_map[choix]
 
                 submitted = st.form_submit_button(
                     "Trouver des films similaires",
@@ -454,14 +442,7 @@ elif menu == "Recommandation":
                             col1, col2 = st.columns([1, 3])
 
                             with col1:
-                                if (pd.notna(row.get('poster_path')) and
-                                        row['poster_path'] != ''):
-                                    st.image(
-                                        TMDB_IMAGE_URL + row['poster_path'],
-                                        width=150
-                                    )
-                                else:
-                                    st.markdown("Pas d'affiche")
+                                afficher_affiche(row, width=150)
 
                             with col2:
                                 st.markdown(f"### {row['title']}")
@@ -556,5 +537,5 @@ elif menu == "À propos":
             - deep-translator
             """)
 
-st.divider()
+
 st.caption("CineMatch — Recommandation de films — 2026")
