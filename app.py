@@ -34,20 +34,15 @@ def afficher_affiche(film, width=150):
         st.markdown("Pas d'affiche disponible")
 
 # Chargement et nettoyage
-# Charge le dataset brut et le dataset nettoyé.
-# Retourne (df_raw, df) — df_raw pour les graphes avant filtrage, df pour les recommandations.
+# Charge le dataset nettoyé depuis data/processed/.
 @st.cache_data
 def load_data():
-    df_raw = pd.read_csv("data/raw/TMDB_movie_dataset_v11.csv",
-        engine='python',
-        on_bad_lines='skip'
-    )
     df = pd.read_csv("data/processed/TMDB_cleaned.csv")
     df['genres'] = df['genres'].apply(
         lambda x: ast.literal_eval(x) if isinstance(x, str) else []
     )
     df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
-    return df_raw, df
+    return df
 
 # Entraînement TF-IDF
 # Calcule les matrices TF-IDF des genres et des descriptions.
@@ -145,7 +140,7 @@ def recommend_hybrid(title, df, mat_genres, mat_overview,
 
 # Chargement des données
 try:
-    df_raw, df = load_data()
+    df = load_data()
     mat_genres, mat_overview = train_model(df)
     data_loaded = True
 except Exception as e:
@@ -202,26 +197,18 @@ elif menu == "Analyse des données":
     if not data_loaded:
         st.warning("Les données ne sont pas chargées.")
     else:
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "Aperçu brut",
+        tab1, tab2, tab3 = st.tabs([
             "Aperçu nettoyé",
             "Statistiques",
             "Visualisations"
         ])
 
         with tab1:
-            st.subheader("Extrait du dataset brut")
-            st.dataframe(df_raw.head(10), use_container_width=True)
-
-        with tab2:
             st.subheader("Extrait du dataset nettoyé")
             st.dataframe(df.head(10), use_container_width=True)
 
-        with tab3:
+        with tab2:
             st.subheader("Statistiques générales")
-            m1, m2 = st.columns(2)
-            m1.metric("Lignes brutes", f"{len(df_raw):,}")
-            m2.metric("Lignes nettoyées", f"{len(df):,}")
             st.divider()
 
             col1, col2, col3, col4 = st.columns(4)
@@ -239,25 +226,8 @@ elif menu == "Analyse des données":
                     use_container_width=True
                 )
 
-        with tab4:
-            st.subheader("Distribution des notes avant filtrage")
-            st.caption("La majorité des films ont une note de 0 car ils n'ont reçu aucun vote. Le dataset brut est très bruité.")
-            fig = px.histogram(df_raw, x='vote_average', nbins=20, color_discrete_sequence=['steelblue'])
-            fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
-            st.plotly_chart(fig, use_container_width=False)
-
-            st.divider()
-
-            st.subheader("Distribution des notes (>= 1 vote)")
-            st.caption("En ne gardant que les films avec au moins 1 vote, le pic à 0 disparaît mais la distribution reste déséquilibrée vers les notes basses.")
-            df_vote1 = df_raw[df_raw['vote_count'] >= 1]
-            fig = px.histogram(df_vote1, x='vote_average', nbins=20, color_discrete_sequence=['steelblue'])
-            fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
-            st.plotly_chart(fig, use_container_width=False)
-
-            st.divider()
-
-            st.subheader("Distribution des notes après filtrage")
+        with tab3:
+            st.subheader("Distribution des notes")
             st.caption("Après filtrage (≥ 3 votes si note < 5, ≥ 10 votes sinon), la distribution est plus fiable et centrée autour de 6-7.")
             fig = px.histogram(df, x='vote_average', nbins=20, color_discrete_sequence=['salmon'])
             fig.update_layout(xaxis_title="Note", yaxis_title="Nombre de films")
